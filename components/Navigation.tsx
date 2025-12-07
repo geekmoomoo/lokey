@@ -1,6 +1,6 @@
 import React from 'react';
 import { Compass, Ticket, User } from 'lucide-react';
-import { AppTab } from '../types';
+import { AppTab } from '@shared/types';
 
 interface NavigationProps {
   currentTab: AppTab;

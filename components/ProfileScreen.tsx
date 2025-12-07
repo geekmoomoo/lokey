@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Coupon, Deal } from '../types';
+import { Coupon, Deal } from '@shared/types';
 import { 
   User, Settings, Bell, 
   HelpCircle, ChevronRight, LogOut, 

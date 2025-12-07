@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MerchantNavigation } from './MerchantNavigation';
-import { MerchantTab, Deal } from '../types';
+import { MerchantTab, Deal } from '@shared/types';
 import { 
   Camera, ChevronRight, BarChart2, Users, Clock, 
   Edit2, Trash2, Plus, Info, Settings, LogOut, Store, 
@@ -11,7 +11,46 @@ import {
 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import { DealScreen } from './DealScreen';
-import { addDeal, getMerchantDeals, updateDeal, generateContextComments } from '../services/dealService';
+import { addDeal, getMerchantDeals, updateDeal, generateContextComments, uploadImageToStorage, fetchMerchantDeals } from '@shared/services/dealService';
+import { supabase, isSupabaseConfigured, ensureSupabase } from '@shared/services/supabaseClient';
+
+// Generate UUID v4
+const generateUUID = (): string => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
+// 사업자등록번호 포맷팅 함수 (000-00-00000)
+const formatBusinessNumber = (value: string): string => {
+  // 숫자만 남기기
+  const numbersOnly = value.replace(/\D/g, '');
+
+  // 10자리가 아니면 그대로 반환
+  if (numbersOnly.length !== 10) {
+    return numbersOnly;
+  }
+
+  // 000-00-00000 형식으로 포맷
+  return `${numbersOnly.slice(0, 3)}-${numbersOnly.slice(3, 5)}-${numbersOnly.slice(5)}`;
+};
+
+// 숫자만 추출하는 함수 (포맷된 번호에서 숫자만 가져오기)
+const extractNumbersOnly = (value: string): string => {
+  return value.replace(/\D/g, '');
+};
+
+// 비밀번호 해싱 함수 (SHA-256, 실제로는 bcrypt 권장)
+const hashPassword = async (password: string): Promise<string> => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  return hashHex;
+};
 
 interface MerchantAppProps {
   onBackToHome: () => void;
@@ -49,26 +88,28 @@ const INITIAL_FORM = {
 
 // Initial Sign Up Form State
 const INITIAL_SIGNUP_FORM = {
-    businessRegNumber: '', // Acts as ID
+    businessRegNumber: '', // 사업자등록번호 (ID로 사용)
     password: '',
-    ownerName: '',
-    ownerPhone: '',
     storeName: '',
-    category: 'KOREAN',
-    storePhone: '',
-    address: '',
-    openTime: '11:00',
-    closeTime: '22:00',
+    storeType: '본점', // 본점/지점 선택
+    category: 'KOREAN', // 업종
+    categoryCustom: '', // 기타 업종 직접 입력
+    address: '', // 도로명 주소
+    storePhone: '', // 매장 전화번호
+    ownerName: '', // 가입확인 대표자 이름
+    ownerPhone: '', // 가입확인 대표자 연락처
+    planType: 'REGULAR' as 'REGULAR' | 'PREMIUM',
 };
 
 // --- IMAGE EDITOR COMPONENT ---
 interface ImageEditorProps {
     imageSrc: string;
+    originalImageSrc: string; // 원본 이미지 추가
     onSave: (newImageSrc: string) => void;
     onCancel: () => void;
 }
 
-const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCancel }) => {
+const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, originalImageSrc, onSave, onCancel }) => {
     const [scale, setScale] = useState(1);
     const [position, setPosition] = useState({ x: 0, y: 0 });
     const [isDragging, setIsDragging] = useState(false);
@@ -149,7 +190,23 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCancel })
                     <span className="text-white font-bold text-sm">이미지 편집</span>
                     <span className="text-[10px] text-gray-500">드래그하여 위치 이동 / 하단 바로 확대</span>
                 </div>
-                <button onClick={handleSave} className="text-purple-400 font-bold p-2 hover:text-purple-300">완료</button>
+                <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => {
+                            if (imageSrc !== originalImageSrc) {
+                                onSave(originalImageSrc); // 원본 이미지로 복원
+                            }
+                        }}
+                        className={`text-sm font-medium p-2 transition-colors ${
+                            imageSrc === originalImageSrc
+                            ? 'text-gray-600 cursor-not-allowed'
+                            : 'text-blue-400 hover:text-blue-300'
+                        }`}
+                    >
+                        원래대로
+                    </button>
+                    <button onClick={handleSave} className="text-purple-400 font-bold p-2 hover:text-purple-300">완료</button>
+                </div>
             </div>
 
             {/* Editor Area */}
@@ -173,13 +230,23 @@ const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, onSave, onCancel })
                     onTouchMove={(e) => handlePointerMove(e.touches[0].clientX, e.touches[0].clientY)}
                     onTouchEnd={handlePointerUp}
                 >
-                    <img 
+                    <img
                         ref={imgRef}
-                        src={imageSrc} 
+                        crossOrigin="anonymous"
+                        src={imageSrc}
                         alt="Edit Target"
                         className="absolute left-1/2 top-1/2 w-full h-auto origin-center pointer-events-none select-none touch-none"
                         style={{
                             transform: `translate(calc(-50% + ${position.x}px), calc(-50% + ${position.y}px)) scale(${scale})`
+                        }}
+                        onLoad={() => {
+                            // 이미지가 성공적으로 로드되었음
+                            console.log('Image loaded successfully');
+                        }}
+                        onError={() => {
+                            // CORS 오류가 있을 경우 대체 처리
+                            console.warn('Image failed to load due to CORS error');
+                            // 여기서 에러 핸들링 로직 추가 가능
                         }}
                     />
 
@@ -262,11 +329,23 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
     const [qtyToAdd, setQtyToAdd] = useState<string>('');
     const [activeTab, setActiveTab] = useState<'ACTIVE' | 'ENDED'>('ACTIVE');
 
-    // Load deals
+    // Load deals from Supabase
     useEffect(() => {
         if (authState === 'LOGGED_IN') {
-            const allDeals = getMerchantDeals();
-            setMyDeals(allDeals); 
+            // Supabase에서 실시간으로 딜 데이터 불러오기
+            const loadDealsFromSupabase = async () => {
+                try {
+                    const fetchedDeals = await fetchMerchantDeals(); // Supabase에서 직접 가져오기
+                    setMyDeals(fetchedDeals || []);
+                } catch (error) {
+                    console.error('딜 데이터 로딩 실패:', error);
+                    // 실패 시 캐시된 데이터로 fallback
+                    const cachedDeals = getMerchantDeals();
+                    setMyDeals(cachedDeals);
+                }
+            };
+
+            loadDealsFromSupabase();
         }
     }, [authState]);
 
@@ -276,8 +355,10 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
 
     const handleStopDeal = (deal: Deal) => {
         if (confirm(`'${deal.title}' 광고를 중단하시겠습니까?\n중단된 광고는 복구할 수 없습니다.`)) {
-            updateDeal(deal.id, { status: 'CANCELED', expiresAt: new Date() });
-            setMyDeals([...getMerchantDeals()]); // Refresh
+            updateDeal(deal.id, { status: 'CANCELED', expiresAt: new Date() }).then(() => {
+                // Supabase에서 다시 데이터 불러오기
+                fetchMerchantDeals().then(deals => setMyDeals(deals || []));
+            });
         }
     };
 
@@ -285,11 +366,13 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
         if (addQtyDeal && qtyToAdd) {
             const added = parseInt(qtyToAdd, 10);
             if (added > 0) {
-                updateDeal(addQtyDeal.id, { 
+                updateDeal(addQtyDeal.id, {
                     totalCoupons: addQtyDeal.totalCoupons + added,
                     remainingCoupons: addQtyDeal.remainingCoupons + added
+                }).then(() => {
+                    // Supabase에서 다시 데이터 불러오기
+                    fetchMerchantDeals().then(deals => setMyDeals(deals || []));
                 });
-                setMyDeals([...getMerchantDeals()]); // Refresh
                 setAddQtyDeal(null);
                 setQtyToAdd('');
                 alert('수량이 추가되었습니다.');
@@ -466,6 +549,105 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
     );
 };
 
+// Supabase에서 파트너 정보 가져오기 + 비밀번호 검증
+const authenticatePartner = async (businessRegNumber: string, password: string): Promise<typeof INITIAL_SIGNUP_FORM | null> => {
+  try {
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase not configured - skipping partner fetch');
+      return null;
+    }
+
+    const supabaseClient = ensureSupabase();
+
+    const { data, error } = await supabaseClient
+      .from('partners')
+      .select('*')
+      .eq('business_reg_number', businessRegNumber)
+      .single();
+
+    if (error || !data) {
+      console.warn('Partner not found in database', error);
+      return null;
+    }
+
+    // 비밀번호 검증
+    const inputHash = await hashPassword(password);
+    if (inputHash !== data.password) {
+      console.warn('Password mismatch for partner:', businessRegNumber);
+      return null;
+    }
+
+    // 데이터 변환 (비밀번호 제외)
+    const partnerData: typeof INITIAL_SIGNUP_FORM = {
+      businessRegNumber: data.business_reg_number,
+      password: '******', // 보안을 위해 마스킹
+      storeName: data.store_name,
+      storeType: data.store_type || '본점',
+      category: data.category,
+      categoryCustom: data.category_custom || '',
+      address: data.address,
+      storePhone: data.store_phone || '',
+      ownerName: data.owner_name,
+      ownerPhone: data.owner_phone,
+      planType: data.plan_type || 'REGULAR'
+    };
+
+    console.log('Partner authenticated successfully:', partnerData.storeName);
+    return partnerData;
+  } catch (error) {
+    console.error('파트너 인증 중 예외 발생:', error);
+    return null;
+  }
+};
+
+// 파트너(상점주인) 정보를 Supabase에 저장하는 함수
+const savePartnerToDatabase = async (signupData: typeof INITIAL_SIGNUP_FORM): Promise<boolean> => {
+  try {
+    if (!isSupabaseConfigured) {
+      console.warn('Supabase not configured - skipping partner save');
+      return false;
+    }
+
+    const supabaseClient = ensureSupabase();
+
+    // 최종 카테고리 결정 (기타 선택 시 직접 입력 값 사용)
+    const finalCategory = signupData.category === 'OTHER' ? signupData.categoryCustom : signupData.category;
+
+    // 비밀번호 해싱
+    const hashedPassword = await hashPassword(signupData.password);
+
+    const partnerData = {
+      business_reg_number: signupData.businessRegNumber,
+      password: hashedPassword, // ✅ 해싱된 비밀번호 저장
+      store_name: signupData.storeName,
+      store_type: signupData.storeType,
+      category: finalCategory,
+      address: signupData.address,
+      store_phone: signupData.storePhone,
+      owner_name: signupData.ownerName,
+      owner_phone: signupData.ownerPhone,
+      plan_type: signupData.planType,
+      status: 'ACTIVE'
+    };
+
+    const { data, error } = await supabaseClient
+      .from('partners')
+      .insert(partnerData)
+      .select();
+
+    if (error) {
+      console.error('파트너 저장 오류:', error);
+      return false;
+    }
+
+    console.log('파트너 저장 성공:', data);
+    return true;
+  } catch (error) {
+    console.error('파트너 저장 중 예외 발생:', error);
+    return false;
+  }
+};
+
 export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
   const [currentTab, setCurrentTab] = useState<MerchantTab>(MerchantTab.AD_REGISTER);
   
@@ -486,8 +668,13 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
   
   // Editor State
   const [editingImageIndex, setEditingImageIndex] = useState<number | null>(null);
+  const [originalGeneratedImages, setOriginalGeneratedImages] = useState<string[]>([]); // 원본 이미지 저장
 
   const [showPreview, setShowPreview] = useState(false);
+
+  // Profile edit state
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editProfileForm, setEditProfileForm] = useState({...INITIAL_SIGNUP_FORM});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // --- HANDLER: COPY DEAL ---
@@ -554,26 +741,103 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
   };
 
 
+  // --- IMAGE COMPRESSION FUNCTION ---
+  const compressImage = async (base64Image: string, maxSizeMB: number = 2.0): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          resolve(base64Image);
+          return;
+        }
+
+        // Calculate target dimensions (max 1024px width for optimization)
+        const maxWidth = 1024;
+        const maxHeight = 1792; // 9:16 ratio
+        let { width, height } = img;
+
+        if (width > maxWidth) {
+          height = (height * maxWidth) / width;
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = (width * maxHeight) / height;
+          height = maxHeight;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        // Draw with quality settings
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Try different quality levels to meet size requirement
+        const tryQuality = (quality: number): string => {
+          return canvas.toDataURL('image/webp', quality);
+        };
+
+        let compressedBase64 = tryQuality(0.85); // Start with 85% quality for better quality
+
+        // Simple estimate of file size from base64 length
+        const estimateSize = (dataUrl: string): number => {
+          const base64 = dataUrl.split(',')[1];
+          return (base64.length * 0.75) / (1024 * 1024); // Convert to MB
+        };
+
+        // Reduce quality if still too large, but keep minimum 0.3 (30%)
+        let quality = 0.85;
+        while (estimateSize(compressedBase64) > maxSizeMB && quality > 0.3) {
+          quality -= 0.05; // Smaller steps for better control
+          compressedBase64 = tryQuality(quality);
+        }
+
+        console.log(`Image compressed: ${estimateSize(base64Image).toFixed(2)}MB → ${estimateSize(compressedBase64).toFixed(2)}MB (quality: ${(quality * 100).toFixed(0)}%)`);
+        resolve(compressedBase64);
+      };
+
+      img.onerror = () => resolve(base64Image);
+      img.crossOrigin = 'anonymous';
+      img.src = base64Image;
+    });
+  };
+
   // --- AI IMAGE GENERATION LOGIC ---
   const constructOptimizedPrompt = (userInput: string, styleId: string) => {
       const selectedStyle = STYLE_PRESETS.find(s => s.id === styleId) || STYLE_PRESETS[0];
-      
+
       return `
         Role: World-class Food Photographer.
         Subject: ${userInput}.
-        
+
         COMPOSITION RULES (CRITICAL):
         1. Aspect Ratio: Vertical (9:16).
         2. SUBJECT POSITION: Place the main food subject CLEARLY in the TOP 40-50% of the frame. The food MUST be placed high up.
         3. NEGATIVE SPACE: The bottom 50% of the image MUST be relatively empty, blurred (bokeh), or have a clean surface (tabletop) to ensure text overlay is readable. Do NOT put important details at the bottom.
-        4. FRAMING: Medium shot. Show the full dish/plate. Do NOT zoom in too close.
+        4. FRAMING: Medium-wide shot. Show the full dish/plate with some extra space around it. Zoom out slightly to ensure the entire food context is visible.
         5. ANGLE: 45-degree angle or slight top-down view.
-        
+
         STYLE & LIGHTING:
         ${selectedStyle.prompt}
-        
-        QUALITY:
+
+        QUALITY & SIZE OPTIMIZATION:
+        - Resolution: 1024x1792 (9:16 ratio optimized for web)
+        - File size: Under 2MB compressed
+        - Format: Optimized for web delivery
+        - Color space: sRGB for web compatibility
+        - Professional food photography quality with efficient compression
+        - Clear details but optimized for mobile display
         8k resolution, highly detailed texture, professional color grading, appetizing, michelin star presentation.
+
+        CREATIVE ENHANCEMENT:
+        - Soft window light creating natural, warm atmosphere
+        - Cinematic lighting with dramatic shadows
+        - Macro lens quality with f/1.8 for stunning depth of field
+        - High angle shot for appetizing food presentation
+        - Professional lighting setup
+        - Premium color grading with accurate food representation
       `;
   };
 
@@ -596,23 +860,38 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
             prompt = "Enhance this food image. Make it look more delicious, improve lighting to be professional studio quality. Keep the composition but refine textures and colors.";
         }
 
+        // Use Gemini 2.5 Flash Image model for image generation
         const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash-image', 
+            model: 'gemini-2.5-flash-image',
             contents: { parts: [...imageParts, { text: prompt }] },
-            config: { 
-                imageConfig: { 
-                    aspectRatio: "9:16"
-                } 
+            config: {
+                imageConfig: {
+                    aspectRatio: "9:16",
+                    guidanceScale: 6.2
+                }
             }
         });
 
+        console.log("Full API response:", response);
+        console.log("Response candidates:", response.candidates);
+
         const newImages: string[] = [];
+
+        // Handle Gemini Flash response format
         if (response.candidates?.[0]?.content?.parts) {
+            console.log("Content parts:", response.candidates[0].content.parts);
             for (const part of response.candidates[0].content.parts) {
+                console.log("Part:", part);
                 if (part.inlineData) {
+                    console.log("Found inlineData:", part.inlineData);
                     newImages.push(`data:image/png;base64,${part.inlineData.data}`);
+                } else if (part.text) {
+                    console.log("Found text:", part.text);
                 }
             }
+        } else {
+            console.log("No content parts found");
+            console.log("First candidate:", response.candidates?.[0]);
         }
 
         if (newImages.length === 0) {
@@ -620,7 +899,34 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
              newImages.push("https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=1000&auto=format&fit=crop");
         }
 
-        setFormData(prev => ({ ...prev, generatedImages: newImages, selectedImageIndex: 0 }));
+        // Compress and upload images to Supabase Storage
+        const uploadedImages: string[] = [];
+        for (let i = 0; i < newImages.length; i++) {
+            const base64Image = newImages[i];
+            if (base64Image.startsWith('data:image/')) {
+                try {
+                    // Compress image before upload
+                    const compressedBase64 = await compressImage(base64Image, 2.0); // Target 2MB max
+                    const uploadedUrl = await uploadImageToStorage(compressedBase64, `ai-generated-${i}`);
+
+                    if (uploadedUrl) {
+                        uploadedImages.push(uploadedUrl);
+                        console.log(`Image ${i} compressed and uploaded successfully:`, uploadedUrl);
+                    } else {
+                        uploadedImages.push(compressedBase64); // Use compressed version even if upload fails
+                        console.warn(`Image ${i} upload failed, using compressed base64`);
+                    }
+                } catch (error) {
+                    console.error(`Image ${i} compression/upload error:`, error);
+                    uploadedImages.push(base64Image); // Fallback to original on any error
+                }
+            } else {
+                uploadedImages.push(base64Image); // Already a URL
+            }
+        }
+
+        setFormData(prev => ({ ...prev, generatedImages: uploadedImages, selectedImageIndex: 0 }));
+        setOriginalGeneratedImages(uploadedImages); // 원본 이미지 저장
 
     } catch (error) {
         console.error("AI Generation Failed:", error);
@@ -893,16 +1199,17 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
             
             {/* Editor Modal */}
             {editingImageIndex !== null && (
-                <ImageEditor 
+                <ImageEditor
                     imageSrc={formData.generatedImages[editingImageIndex]}
+                    originalImageSrc={originalGeneratedImages[editingImageIndex] || formData.generatedImages[editingImageIndex]}
                     onCancel={() => setEditingImageIndex(null)}
                     onSave={(newImageSrc) => {
                         const newImages = [...formData.generatedImages];
                         newImages[editingImageIndex] = newImageSrc;
-                        setFormData({ 
-                            ...formData, 
+                        setFormData({
+                            ...formData,
                             generatedImages: newImages,
-                            selectedImageIndex: editingImageIndex 
+                            selectedImageIndex: editingImageIndex
                         });
                         setEditingImageIndex(null);
                     }}
@@ -1035,7 +1342,7 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
                 benefitType: formData.benefitType,
                 customBenefit: formData.benefitType === 'CUSTOM' ? formData.benefitValue : undefined,
                 restaurant: {
-                    id: `rest-${Date.now()}`,
+                    id: generateUUID(),
                     name: signupForm.storeName || "내 매장",
                     category: signupForm.category,
                     distance: 10,
@@ -1081,37 +1388,239 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
 
   const renderProfileTab = () => {
     if (authState === 'LOGGED_IN') {
+        // 편집 모드 시작 시 현재 정보로 폼 초기화 (사업자등록번호 제외)
+        const startEditProfile = () => {
+            setEditProfileForm({
+                ...signupForm,
+                businessRegNumber: loginBusinessNum || signupForm.businessRegNumber, // 사업자등록번호는 읽기 전용
+            });
+            setIsEditingProfile(true);
+        };
+
+        // 프로필 수정 저장
+        const saveProfile = async () => {
+            // 유효성 검사
+            if (!editProfileForm.storeName || !editProfileForm.ownerName || !editProfileForm.ownerPhone) {
+                return alert('필수 정보를 모두 입력해주세요.');
+            }
+
+            // TODO: Supabase에 업데이트 로직 추가
+            console.log('프로필 수정:', editProfileForm);
+
+            // 임시로 폼 데이터만 업데이트
+            setSignupForm(editProfileForm);
+            setIsEditingProfile(false);
+            alert('프로필이 수정되었습니다.');
+        };
+
+        if (isEditingProfile) {
+            // 편집 모드
+            return (
+                <div className="w-full h-full p-6 pb-24 flex flex-col overflow-y-auto no-scrollbar">
+                    <div className="flex justify-between items-center mb-6">
+                        <button onClick={() => setIsEditingProfile(false)} className="text-gray-400 p-2 hover:text-white">
+                            <ArrowLeft size={20} />
+                        </button>
+                        <h2 className="text-xl font-bold text-white">내정보 수정</h2>
+                        <button onClick={saveProfile} className="text-purple-400 font-bold text-sm">저장</button>
+                    </div>
+
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">매장명 *</label>
+                            <input
+                                type="text"
+                                value={editProfileForm.storeName}
+                                onChange={(e) => setEditProfileForm({...editProfileForm, storeName: e.target.value})}
+                                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                placeholder="매장 이름을 입력하세요"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">본점/지점 선택</label>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setEditProfileForm({...editProfileForm, storeType: '본점'})}
+                                    className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                                        editProfileForm.storeType === '본점'
+                                        ? 'bg-purple-600 text-white'
+                                        : 'bg-neutral-800 text-gray-400 border border-neutral-700'
+                                    }`}
+                                >
+                                    본점
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setEditProfileForm({...editProfileForm, storeType: '지점'})}
+                                    className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                                        editProfileForm.storeType === '지점'
+                                        ? 'bg-purple-600 text-white'
+                                        : 'bg-neutral-800 text-gray-400 border border-neutral-700'
+                                    }`}
+                                >
+                                    지점
+                                </button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">업종 *</label>
+                            <select
+                                value={editProfileForm.category}
+                                onChange={(e) => setEditProfileForm({...editProfileForm, category: e.target.value})}
+                                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                            >
+                                <option value="KOREAN">한식</option>
+                                <option value="JAPANESE">일식</option>
+                                <option value="CHINESE">중식</option>
+                                <option value="WESTERN">양식</option>
+                                <option value="CAFE_DESSERT">카페/디저트</option>
+                                <option value="PUB">술집</option>
+                                <option value="CHICKEN">치킨</option>
+                                <option value="PIZZA">피자</option>
+                                <option value="BURGER">버거</option>
+                                <option value="SALAD">샐러드</option>
+                                <option value="OTHER">기타</option>
+                            </select>
+                        </div>
+
+                        {editProfileForm.category === 'OTHER' && (
+                            <div>
+                                <label className="block text-xs font-bold text-gray-500 mb-1">업종 직접 입력</label>
+                                <input
+                                    type="text"
+                                    value={editProfileForm.categoryCustom}
+                                    onChange={(e) => setEditProfileForm({...editProfileForm, categoryCustom: e.target.value})}
+                                    className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                    placeholder="업종을 직접 입력하세요"
+                                />
+                            </div>
+                        )}
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">매장 주소</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={editProfileForm.address}
+                                    onChange={(e) => setEditProfileForm({...editProfileForm, address: e.target.value})}
+                                    className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                    placeholder="상세 주소 입력"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">매장 전화번호</label>
+                            <input
+                                type="tel"
+                                value={editProfileForm.storePhone}
+                                onChange={(e) => setEditProfileForm({...editProfileForm, storePhone: e.target.value})}
+                                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                placeholder="02-1234-5678"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">가입확인 대표자 이름 *</label>
+                            <input
+                                type="text"
+                                value={editProfileForm.ownerName}
+                                onChange={(e) => setEditProfileForm({...editProfileForm, ownerName: e.target.value})}
+                                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                placeholder="대표자 성명 입력"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">가입확인 대표자 연락처 *</label>
+                            <input
+                                type="tel"
+                                value={editProfileForm.ownerPhone}
+                                onChange={(e) => setEditProfileForm({...editProfileForm, ownerPhone: e.target.value})}
+                                className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                placeholder="010-1234-5678"
+                            />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // 보기 모드
         return (
             <div className="w-full h-full p-6 pb-24 flex flex-col">
-                <div className="mb-8 text-center">
-                    <div className="w-20 h-20 bg-neutral-800 rounded-full mx-auto mb-4 flex items-center justify-center border border-neutral-700">
-                        <Store size={32} className="text-white" />
+                <div className="flex justify-between items-center mb-6">
+                    <div className="flex items-center gap-2">
+                        <Store size={24} className="text-purple-400" />
+                        <h2 className="text-xl font-bold text-white">내정보</h2>
                     </div>
-                    <h2 className="text-2xl font-black text-white">{signupForm.storeName}</h2>
-                    <p className="text-sm text-gray-500">{signupForm.category} · 사장님</p>
-                </div>
-                
-                <div className="space-y-4">
-                     <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 flex justify-between items-center">
-                         <span className="text-sm text-gray-400">사업자 등록번호</span>
-                         <span className="text-white font-bold">{loginBusinessNum || signupForm.businessRegNumber}</span>
-                     </div>
-                     <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800 flex justify-between items-center">
-                         <span className="text-sm text-gray-400">등록된 주소</span>
-                         <span className="text-white font-bold text-xs">{signupForm.address || "주소 미입력"}</span>
-                     </div>
+                    <button
+                        onClick={startEditProfile}
+                        className="text-purple-400 font-medium text-sm hover:text-purple-300"
+                    >
+                        수정
+                    </button>
                 </div>
 
-                <div className="mt-auto">
-                    <button 
+                <div className="mb-8 text-center">
+                    <div className="w-24 h-24 bg-gradient-to-br from-purple-600 to-purple-800 rounded-full mx-auto mb-4 flex items-center justify-center border-2 border-purple-500/30 shadow-lg">
+                        <Store size={40} className="text-white" />
+                    </div>
+                    <h2 className="text-2xl font-black text-white">{signupForm.storeName}</h2>
+                    <p className="text-sm text-gray-400">{signupForm.storeType} · {signupForm.category.includes('KOREAN') ? '한식' : signupForm.category.includes('JAPANESE') ? '일식' : signupForm.category} · 사장님</p>
+                </div>
+
+                <div className="space-y-4 flex-1">
+                    <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm text-gray-400">사업자 등록번호</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-white font-bold">{formatBusinessNumber(loginBusinessNum || signupForm.businessRegNumber)}</span>
+                                <Lock size={12} className="text-gray-500" />
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">사업자등록번호는 수정할 수 없습니다</p>
+                    </div>
+
+                    <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm text-gray-400">매장 주소</span>
+                            <span className="text-white font-bold text-sm text-right">{signupForm.address || "주소 미입력"}</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm text-gray-400">매장 전화번호</span>
+                            <span className="text-white font-bold">{signupForm.storePhone || "미등록"}</span>
+                        </div>
+                    </div>
+
+                    <div className="bg-neutral-900 p-4 rounded-2xl border border-neutral-800">
+                        <div className="flex justify-between items-center mb-2">
+                            <span className="text-sm text-gray-400">대표자명</span>
+                            <span className="text-white font-bold">{signupForm.ownerName}</span>
+                        </div>
+                        <div className="flex justify-between items-center mt-2">
+                            <span className="text-sm text-gray-400">대표자 연락처</span>
+                            <span className="text-white font-bold">{signupForm.ownerPhone}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-6 space-y-3">
+                    <button
                         onClick={() => { setAuthState('LOGGED_OUT'); setLoginPw(''); }}
-                        className="w-full py-4 bg-neutral-900 text-red-400 font-bold rounded-xl border border-neutral-800 hover:bg-neutral-800"
+                        className="w-full py-4 bg-neutral-900 text-red-400 font-bold rounded-xl border border-neutral-800 hover:bg-neutral-800 transition-colors"
                     >
                         로그아웃
                     </button>
-                    <button 
+                    <button
                         onClick={onBackToHome}
-                        className="w-full mt-3 py-4 text-gray-500 font-medium text-xs underline"
+                        className="w-full py-4 text-gray-500 font-medium text-sm underline hover:text-gray-400 transition-colors"
                     >
                         메인 화면으로 나가기
                     </button>
@@ -1130,42 +1639,183 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
                 
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">매장명</label>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">매장명 *</label>
                         <input type="text" value={signupForm.storeName} onChange={(e) => setSignupForm({...signupForm, storeName: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="매장 이름을 입력하세요" />
                     </div>
+
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">사업자 등록번호</label>
-                        <input type="text" value={signupForm.businessRegNumber} onChange={(e) => setSignupForm({...signupForm, businessRegNumber: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="10자리 숫자" />
+                        <label className="block text-xs font-bold text-gray-500 mb-1">본점/지점 선택</label>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setSignupForm({...signupForm, storeType: '본점'})}
+                                className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                                    signupForm.storeType === '본점'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-neutral-800 text-gray-400 border border-neutral-700'
+                                }`}
+                            >
+                                본점
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setSignupForm({...signupForm, storeType: '지점'})}
+                                className={`flex-1 py-3 rounded-xl font-medium transition-colors ${
+                                    signupForm.storeType === '지점'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-neutral-800 text-gray-400 border border-neutral-700'
+                                }`}
+                            >
+                                지점
+                            </button>
+                        </div>
                     </div>
+
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">비밀번호</label>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">사업자 등록번호 *</label>
+                        <input
+                            type="text"
+                            value={formatBusinessNumber(signupForm.businessRegNumber)}
+                            onChange={(e) => setSignupForm({...signupForm, businessRegNumber: extractNumbersOnly(e.target.value)})}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                            placeholder="000-00-00000"
+                            maxLength={12} // 000-00-00000 형식 최대 길이
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">비밀번호 *</label>
                         <input type="password" value={signupForm.password} onChange={(e) => setSignupForm({...signupForm, password: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="비밀번호 설정" />
                     </div>
-                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">카테고리</label>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">업종 *</label>
                         <select value={signupForm.category} onChange={(e) => setSignupForm({...signupForm, category: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none">
-                            <option value="한식">한식</option>
-                            <option value="일식">일식</option>
-                            <option value="중식">중식</option>
-                            <option value="양식">양식</option>
-                            <option value="카페/디저트">카페/디저트</option>
-                            <option value="술집">술집</option>
+                            <option value="KOREAN">한식</option>
+                            <option value="JAPANESE">일식</option>
+                            <option value="CHINESE">중식</option>
+                            <option value="WESTERN">양식</option>
+                            <option value="CAFE_DESSERT">카페/디저트</option>
+                            <option value="PUB">술집</option>
+                            <option value="CHICKEN">치킨</option>
+                            <option value="PIZZA">피자</option>
+                            <option value="BURGER">버거</option>
+                            <option value="SALAD">샐러드</option>
+                            <option value="OTHER">기타</option>
                         </select>
                     </div>
+
+                    {signupForm.category === 'OTHER' && (
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 mb-1">업종 직접 입력</label>
+                            <input type="text" value={signupForm.categoryCustom} onChange={(e) => setSignupForm({...signupForm, categoryCustom: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="업종을 직접 입력하세요" />
+                        </div>
+                    )}
+
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 mb-1">매장 주소</label>
-                        <input type="text" value={signupForm.address} onChange={(e) => setSignupForm({...signupForm, address: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="상세 주소 입력" />
+                        <label className="block text-xs font-bold text-gray-500 mb-1">매장 주소 *</label>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={signupForm.address}
+                                onChange={(e) => setSignupForm({...signupForm, address: e.target.value})}
+                                className="flex-1 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                                placeholder="도로명 주소 검색"
+                                readOnly
+                            />
+                            <button
+                                type="button"
+                                className="px-4 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-500 transition-colors"
+                                onClick={() => alert('도로명 주소 검색 기능은 곧 추가됩니다. 임시로 직접 입력해주세요.')}
+                            >
+                                검색
+                            </button>
+                        </div>
+                        <input
+                            type="text"
+                            value={signupForm.address}
+                            onChange={(e) => setSignupForm({...signupForm, address: e.target.value})}
+                            className="w-full mt-2 bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none"
+                            placeholder="상세 주소 입력"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">매장 전화번호</label>
+                        <input type="tel" value={signupForm.storePhone} onChange={(e) => setSignupForm({...signupForm, storePhone: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="02-1234-5678" />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">가입확인 대표자 이름 *</label>
+                        <input type="text" value={signupForm.ownerName} onChange={(e) => setSignupForm({...signupForm, ownerName: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="대표자 성명 입력" />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 mb-1">가입확인 대표자 연락처 *</label>
+                        <input type="tel" value={signupForm.ownerPhone} onChange={(e) => setSignupForm({...signupForm, ownerPhone: e.target.value})} className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-3 text-white focus:border-purple-500 outline-none" placeholder="010-1234-5678" />
                     </div>
                 </div>
 
                 <div className="mt-8">
-                    <button 
-                        onClick={() => {
-                            if(!signupForm.storeName || !signupForm.businessRegNumber || !signupForm.password) return alert("필수 정보를 모두 입력해주세요.");
-                            setAuthState('LOGGED_IN');
-                            setLoginBusinessNum(signupForm.businessRegNumber);
+                    <button
+                        onClick={async () => {
+                            // 필수 필드 유효성 검사
+                            const requiredFields = [
+                                { field: signupForm.storeName, name: '매장명' },
+                                { field: signupForm.businessRegNumber, name: '사업자 등록번호' },
+                                { field: signupForm.password, name: '비밀번호' },
+                                { field: signupForm.address, name: '매장 주소' },
+                                { field: signupForm.ownerName, name: '대표자 이름' },
+                                { field: signupForm.ownerPhone, name: '대표자 연락처' }
+                            ];
+
+                            // 기타 업종 선택 시 직접 입력 값 확인
+                            if (signupForm.category === 'OTHER') {
+                                requiredFields.push({ field: signupForm.categoryCustom, name: '업종' });
+                            }
+
+                            const missingFields = requiredFields.filter(({ field }) => !field.trim());
+                            if (missingFields.length > 0) {
+                                return alert(`${missingFields.map(({ name }) => name).join(', ')} 필드는 필수 입력 항목입니다.`);
+                            }
+
+                            // 사업자등록번호 숫자만인지 확인
+                            if (!/^\d{10}$/.test(signupForm.businessRegNumber)) {
+                                return alert('사업자등록번호는 10자리 숫자로 입력해주세요.');
+                            }
+
+                            // 비밀번호 길이 확인
+                            if (signupForm.password.length < 4) {
+                                return alert('비밀번호는 최소 4자 이상 입력해주세요.');
+                            }
+
+                            // 로딩 상태 표시 (선택사항)
+                            const button = event.target as HTMLButtonElement;
+                            const originalText = button.textContent;
+                            button.textContent = '가입 처리 중...';
+                            button.disabled = true;
+
+                            try {
+                                // 데이터베이스에 저장
+                                const success = await savePartnerToDatabase(signupForm);
+
+                                if (success) {
+                                    alert('회원가입이 완료되었습니다!');
+                                    setLoginBusinessNum(signupForm.businessRegNumber);
+                                    setAuthState('LOGGED_IN');
+                                } else {
+                                    alert('회원가입 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+                                    button.textContent = originalText;
+                                    button.disabled = false;
+                                }
+                            } catch (error) {
+                                console.error('회원가입 오류:', error);
+                                alert('회원가입 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+                                button.textContent = originalText;
+                                button.disabled = false;
+                            }
                         }}
-                        className="w-full py-4 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-500"
+                        className="w-full py-4 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-500 transition-colors"
                     >
                         등록 완료 및 시작하기
                     </button>
@@ -1184,12 +1834,13 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
             <p className="text-gray-500 text-xs mb-8">등록된 사업자 번호로 로그인해주세요.</p>
 
             <div className="space-y-4 w-full mb-6">
-                <input 
-                    type="text" 
-                    placeholder="사업자 등록번호" 
-                    value={loginBusinessNum}
-                    onChange={(e) => setLoginBusinessNum(e.target.value)}
+                <input
+                    type="text"
+                    value={formatBusinessNumber(loginBusinessNum)}
+                    onChange={(e) => setLoginBusinessNum(extractNumbersOnly(e.target.value))}
                     className="w-full bg-neutral-900 border border-neutral-800 rounded-xl px-4 py-4 text-white placeholder-gray-600 focus:border-purple-500 outline-none"
+                    placeholder="000-00-00000"
+                    maxLength={12}
                 />
                 <input 
                     type="password" 
@@ -1200,10 +1851,27 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
                 />
             </div>
 
-            <button 
-                onClick={() => {
-                    if (loginBusinessNum && loginPw) setAuthState('LOGGED_IN');
-                    else alert('정보를 입력해주세요.');
+            <button
+                onClick={async () => {
+                    if (!loginBusinessNum || !loginPw) {
+                        alert('사업자등록번호와 비밀번호를 입력해주세요.');
+                        return;
+                    }
+
+                    // ✅ 진짜 인증 로직 추가
+                    const partnerData = await authenticatePartner(
+                        extractNumbersOnly(loginBusinessNum),
+                        loginPw
+                    );
+
+                    if (partnerData) {
+                        setSignupForm(partnerData);
+                        setLoginBusinessNum(partnerData.businessRegNumber);
+                        setAuthState('LOGGED_IN');
+                        alert(`${partnerData.storeName}님, 환영합니다!`);
+                    } else {
+                        alert('사업자등록번호 또는 비밀번호가 올바르지 않습니다.');
+                    }
                 }}
                 className="w-full py-4 bg-white text-black font-bold rounded-xl mb-4 hover:bg-gray-200 transition-colors"
             >

@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Clock, CheckCircle, Share2, Heart, ChevronRight, MapPin, Sparkles, Ghost, Fingerprint, Unlock, AlertCircle, ShoppingBag, Eye, MessageCircle, Send, X } from 'lucide-react';
-import { Deal } from '../types';
+import { Clock, CheckCircle, Share2, Heart, ChevronRight, MapPin, Sparkles, AlertCircle, ShoppingBag, MessageCircle, Send, X } from 'lucide-react';
+import { Deal } from '@shared/types';
 
 interface DealScreenProps {
   deal: Deal;
@@ -24,12 +24,8 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
   const [isTorn, setIsTorn] = useState(false);
   const [timeLeft, setTimeLeft] = useState("");
   
-  // Ghost Deal States
-  const [isRevealed, setIsRevealed] = useState(!deal.isGhost);
-  const [isPressing, setIsPressing] = useState(false);
-  const [unlockProgress, setUnlockProgress] = useState(0);
+  // Image State
   const [isImageStable, setIsImageStable] = useState(false); // To optimize image sharpness
-  const pressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
   // Favorite Button State
   const [isFavorite, setIsFavorite] = useState(false);
@@ -61,12 +57,10 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
 
   // --- Image Sharpness Optimization ---
   useEffect(() => {
-      if (isRevealed) {
-          // Remove transition/transform classes after animation finishes to prevent blurry rendering
-          const timer = setTimeout(() => setIsImageStable(true), 1100);
-          return () => clearTimeout(timer);
-      }
-  }, [isRevealed]);
+      // Remove transition/transform classes after animation finishes to prevent blurry rendering
+      const timer = setTimeout(() => setIsImageStable(true), 1100);
+      return () => clearTimeout(timer);
+  }, []);
 
   // --- DANMAKU LOGIC (Top Zone) ---
   const addDanmaku = useCallback((text: string, isUser: boolean = false) => {
@@ -91,7 +85,6 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
   }, []);
 
   useEffect(() => {
-      if (!isRevealed) return;
       const scheduleNextComment = () => {
           const isBurst = Math.random() > 0.8;
           const delay = isBurst 
@@ -120,7 +113,7 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
       };
       scheduleNextComment();
       return () => { if (danmakuTimeoutRef.current) clearTimeout(danmakuTimeoutRef.current); };
-  }, [isRevealed, addDanmaku, deal.initialComments, userSubmittedComments]);
+  }, [true, addDanmaku, deal.initialComments, userSubmittedComments]);
 
   const handleUserCommentSubmit = (e: React.FormEvent) => {
       e.preventDefault();
@@ -132,16 +125,8 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
       safeVibrate(50);
   };
 
-  useEffect(() => {
-    if (isTorn) return;
-    const interval = setInterval(() => {
-      setRemaining((prev) => {
-        if (prev > 1 && Math.random() > 0.8) return prev - 1;
-        return prev;
-      });
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [isTorn]);
+  // NOTE: 티켓 수량 자동 감소 시뮬레이션 로직 제거됨
+  // 실제 사용자 구매 시에만 수량이 줄어들어야 함
 
   useEffect(() => {
     const updateTimer = () => {
@@ -172,38 +157,10 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
       }
   };
 
-  // --- Ghost Reveal ---
-  const startUnlock = () => {
-    if (isRevealed) return;
-    setIsPressing(true);
-    safeVibrate(20);
-    let progress = 0;
-    const interval = setInterval(() => {
-        progress += 4; 
-        if (progress >= 100) {
-            clearInterval(interval);
-            setIsRevealed(true);
-            setIsPressing(false);
-            safeVibrate([50, 100, 50]);
-        }
-        setUnlockProgress(progress);
-    }, 25);
-    pressTimerRef.current = interval;
-  };
-
-  const cancelUnlock = () => {
-    if (isRevealed) return;
-    setIsPressing(false);
-    if (pressTimerRef.current) {
-        clearInterval(pressTimerRef.current);
-        pressTimerRef.current = null;
-    }
-    setUnlockProgress(0);
-  };
-
+  
   // --- Confetti (Rain from Top) ---
   const triggerConfetti = useCallback(() => {
-    const colors = deal.isGhost ? ['#a855f7', '#d8b4fe', '#ffffff'] : ['#fde047', '#facc15', '#ffffff', '#fbbf24'];
+    const colors = ['#fde047', '#facc15', '#ffffff', '#fbbf24'];
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect) return;
 
@@ -249,14 +206,14 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
         
         setTimeout(() => piece.remove(), duration + delay + 100);
     }
-  }, [deal.isGhost]);
+  }, []);
 
   // --- Ticket Drag Logic ---
   const handleStart = (e: React.MouseEvent | React.TouchEvent, clientX: number) => {
     // CRITICAL: Stop propagation to prevent vertical scroll while dragging ticket
     e.stopPropagation(); 
     
-    if (isTorn || remaining === 0 || !isRevealed) return;
+    if (isTorn || remaining === 0 || false) return;
     setIsDragging(true);
     dragStartX.current = clientX;
     safeVibrate(10);
@@ -313,8 +270,8 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
             src={deal.imageUrl} 
             alt={deal.title} 
             className={`w-full h-full object-cover 
-              ${!isRevealed 
-                  ? 'blur-2xl grayscale brightness-50 scale-105 transition-all duration-1000 ease-out' 
+              ${false
+                  ? 'blur-2xl grayscale brightness-50 scale-105 transition-all duration-1000 ease-out'
                   : isImageStable 
                     ? 'blur-0 grayscale-0 brightness-100' // CLEAN STATE: No transition, no scale
                     : 'blur-0 grayscale-0 brightness-100 scale-100 transition-all duration-1000 ease-out' // ANIMATING STATE
@@ -326,7 +283,7 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
       </div>
 
       {/* --- DANMAKU OVERLAY (Header Area) --- */}
-      {isRevealed && (
+      {true && (
           <div className="absolute inset-0 z-10 pointer-events-none overflow-hidden">
               {danmakuList.map(item => (
                   <div 
@@ -390,60 +347,9 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
           </div>
       )}
 
-      {/* --- GHOST OVERLAY (LOCKED STATE) --- */}
-      {!isRevealed && (
-          <div 
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/30 backdrop-blur-sm cursor-pointer"
-            onMouseDown={startUnlock}
-            onMouseUp={cancelUnlock}
-            onMouseLeave={cancelUnlock}
-            onTouchStart={startUnlock}
-            onTouchEnd={cancelUnlock}
-          >
-             <div className="relative mb-6">
-                 <div className={`absolute inset-0 rounded-full border-2 border-purple-500 opacity-50 ${isPressing ? 'scale-150 animate-ping' : ''}`}></div>
-                 <div className={`w-24 h-24 rounded-full bg-black/60 border border-purple-500/50 flex items-center justify-center backdrop-blur-md shadow-[0_0_30px_rgba(168,85,247,0.3)] transition-transform duration-200 ${isPressing ? 'scale-95' : ''}`}>
-                    {isPressing ? (
-                         <Unlock size={40} className="text-purple-400 animate-pulse" />
-                    ) : (
-                         <Ghost size={40} className="text-purple-400 animate-bounce-slow" />
-                    )}
-                 </div>
-                 
-                 {/* Circular Progress SVG */}
-                 {isPressing && (
-                     <svg className="absolute -inset-2 w-28 h-28 transform -rotate-90 pointer-events-none">
-                         <circle
-                             cx="56" cy="56" r="52"
-                             fill="none"
-                             stroke="rgba(255,255,255,0.1)"
-                             strokeWidth="4"
-                         />
-                         <circle
-                             cx="56" cy="56" r="52"
-                             fill="none"
-                             stroke="#a855f7"
-                             strokeWidth="4"
-                             strokeDasharray="327"
-                             strokeDashoffset={327 - (327 * unlockProgress) / 100}
-                             strokeLinecap="round"
-                         />
-                     </svg>
-                 )}
-             </div>
-             <div className="text-center">
-                 <h2 className="text-2xl font-black text-white tracking-widest mb-2 drop-shadow-lg">
-                    {isPressing ? "DECRYPTING..." : "GHOST TICKET"}
-                 </h2>
-                 <p className="text-purple-300 text-xs font-bold uppercase tracking-[0.2em] animate-pulse">
-                    {isPressing ? "ACCESSING SECURE DATA" : "PRESS & HOLD TO REVEAL"}
-                 </p>
-             </div>
-          </div>
-      )}
-
+      
       {/* Top Bar: Share & Comment */}
-      <div className={`absolute top-0 left-0 right-0 p-6 pt-12 flex justify-end items-start gap-3 z-30 transition-opacity duration-500 ${!isRevealed ? 'opacity-0' : 'opacity-100'}`}>
+      <div className="absolute top-0 left-0 right-0 p-6 pt-12 flex justify-end items-start gap-3 z-30 opacity-100">
         <button 
             onClick={() => setShowCommentInput(true)}
             className="w-10 h-10 rounded-full bg-black/20 backdrop-blur-sm border border-white/10 flex items-center justify-center text-white/90 hover:bg-black/40 hover:text-yellow-400 transition-colors active:scale-95 shadow-lg"
@@ -456,16 +362,11 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
       </div>
 
       {/* --- INFO LAYER --- */}
-      <div className={`absolute bottom-[90px] left-0 right-0 z-20 px-6 w-full flex flex-col gap-2 transition-all duration-700 ${!isRevealed ? 'translate-y-20 opacity-0 blur-sm' : 'translate-y-0 opacity-100 blur-0'}`}>
+      <div className={`absolute bottom-[90px] left-0 right-0 z-20 px-6 w-full flex flex-col gap-2 transition-all duration-700 translate-y-0 opacity-100 blur-0`}>
         
         {/* Badge */}
         <div className="self-start">
-             {deal.isGhost ? (
-                 <div className="flex items-center gap-1.5 bg-purple-600/90 text-white px-2.5 py-1 rounded-full backdrop-blur-md shadow-lg mb-2 border border-purple-400/50">
-                     <Ghost size={10} className="text-white" />
-                     <span className="text-[10px] font-black tracking-wide uppercase">Limited Ghost Deal</span>
-                 </div>
-             ) : isAdMode ? (
+             {isAdMode ? (
                  <div className="flex items-center gap-1.5 bg-green-500/90 text-white px-2.5 py-1 rounded-full backdrop-blur-md shadow-lg mb-2">
                      <Sparkles size={10} fill="white" />
                      <span className="text-[10px] font-black tracking-wide uppercase">RECOMMENDED</span>
@@ -480,12 +381,15 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
 
         {/* Title */}
         <div className="text-left">
-           <h1 className="text-3xl font-black text-white leading-tight drop-shadow-lg break-keep shadow-black">
+           <h1
+              className="text-3xl font-black text-white leading-tight break-keep"
+              style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.5)' }}
+           >
               {deal.title}
            </h1>
-           
+
            <div className="mt-2 flex flex-col gap-2">
-             <div className={`font-bold drop-shadow-md transition-all ${deal.isGhost ? 'text-purple-400' : isAdMode ? 'text-green-400' : 'text-yellow-400'}`}>
+             <div className={`font-bold drop-shadow-md transition-all ${isAdMode ? 'text-green-400' : 'text-yellow-400'}`}>
                 {isAdMode ? (
                     <div className="flex flex-col items-start gap-1">
                         <span className="text-3xl font-black text-green-400 tracking-tight flex items-center gap-2">
@@ -497,7 +401,12 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
                         </span>
                     </div>
                 ) : (
-                    <span className="text-2xl">{formattedDiscount}원 할인혜택</span>
+                    <span
+                      className="text-2xl"
+                      style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.4)' }}
+                    >
+                      {formattedDiscount}원 할인혜택
+                    </span>
                 )}
              </div>
              {deal.usageCondition && (
@@ -511,9 +420,19 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
 
         {/* Store Info & Favorite Button Row */}
         <div className="flex justify-between items-center mt-1">
-             <div className="flex items-center gap-2 text-white/90 text-sm font-medium drop-shadow-md">
-                <span className="text-white font-bold border-b border-white/30 pb-0.5">{deal.restaurant.name}</span>
-                <span className="text-xs text-white/70">{deal.restaurant.category}</span>
+             <div className="flex items-center gap-2 text-white/90 text-sm font-medium">
+                <span
+                  className="text-white font-bold border-b border-white/30 pb-0.5"
+                  style={{ textShadow: '1px 1px 2px rgba(0,0,0,0.4)' }}
+                >
+                  {deal.restaurant.name}
+                </span>
+                <span
+                  className="text-xs text-white/70 font-medium"
+                  style={{ textShadow: '1px 1px 1px rgba(0,0,0,0.3)' }}
+                >
+                  {deal.restaurant.category}
+                </span>
             </div>
 
             <button 
@@ -538,8 +457,11 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
             </button>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-gray-400 mb-2">
-             <span className="flex items-center gap-1">
+        <div className="flex items-center gap-2 text-xs text-white/90 mb-2">
+             <span
+               className="flex items-center gap-1"
+               style={{ textShadow: '1px 1px 1px rgba(0,0,0,0.3)' }}
+             >
                <MapPin size={10} /> {deal.restaurant.distance}m 거리
              </span>
         </div>
@@ -559,14 +481,14 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
                     ) : (
                         <>
                             <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-0.5">
-                                {deal.isGhost ? "Ghost" : isAdMode ? "New" : "Invite"}
+                                {isAdMode ? "New" : "Invite"}
                             </span>
                             {isAdMode ? (
                                 <span className="text-xl font-black text-black leading-none tracking-tight">홍보</span>
                             ) : (
                                 <span className="text-xl font-black text-black leading-none">{remaining}</span>
                             )}
-                            <div className={`mt-1 px-2 py-0.5 text-white text-[8px] font-bold rounded-sm ${deal.isGhost ? 'bg-purple-700' : isAdMode ? 'bg-green-600' : 'bg-black'}`}>
+                            <div className={`mt-1 px-2 py-0.5 text-white text-[8px] font-bold rounded-sm ${isAdMode ? 'bg-green-600' : 'bg-black'}`}>
                                 {isAdMode ? '추천' : '잔여석'}
                             </div>
                         </>

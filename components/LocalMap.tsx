@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Navigation, MapPin, Target, Crosshair, Compass } from 'lucide-react';
-import { Deal, Coupon } from '../types';
+import { Deal, Coupon } from '@shared/types';
 
 interface LocalMapProps {
   onClose: () => void;

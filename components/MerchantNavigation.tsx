@@ -1,6 +1,6 @@
 import React from 'react';
 import { PlusCircle, Layers, Store } from 'lucide-react';
-import { MerchantTab } from '../types';
+import { MerchantTab } from '@shared/types';
 
 interface MerchantNavigationProps {
   currentTab: MerchantTab;

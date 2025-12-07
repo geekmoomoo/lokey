@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Coupon, Location } from '../types';
+import { Coupon, Location } from '@shared/types';
 import { X, Check, Clock, Sparkles, Lock, Unlock, MapPin, AlertTriangle, Fingerprint, Stamp, Navigation, Radar, Megaphone } from 'lucide-react';
 
 interface CouponsScreenProps {

@@ -5,8 +5,9 @@ import { CouponsScreen } from './CouponsScreen';
 import { ProfileScreen } from './ProfileScreen';
 import { GoldenTicketScreen } from './GoldenTicketScreen';
 import { LoginScreen } from './LoginScreen';
-import { fetchFlashDeals } from '../services/dealService';
-import { Deal, AppTab, Coupon } from '../types';
+import { fetchFlashDeals } from '@shared/services/dealService';
+import { Deal, AppTab, Coupon } from '@shared/types';
+import { Compass } from 'lucide-react';
 
 interface UserAppProps {
   onBackToHome: () => void;
@@ -161,14 +162,35 @@ export const UserApp: React.FC<UserAppProps> = ({ onBackToHome }) => {
                 {/* Tab: SEARCH (Feed) */}
                 {currentTab === AppTab.SEARCH && (
                     <div className="w-full h-full overflow-y-scroll snap-y snap-mandatory no-scrollbar overscroll-contain touch-pan-y">
-                    {deals.map((deal) => (
-                    <div key={deal.id} className="w-full h-full snap-center snap-always shrink-0 relative">
-                        <DealScreen 
-                        deal={deal} 
-                        onUseCoupon={() => handleClaimCoupon(deal)}
-                        />
-                    </div>
-                    ))}
+                    {deals.length > 0 ? (
+                        deals.map((deal) => (
+                        <div key={deal.id} className="w-full h-full snap-center snap-always shrink-0 relative">
+                            <DealScreen
+                            deal={deal}
+                            onUseCoupon={() => handleClaimCoupon(deal)}
+                            />
+                        </div>
+                        ))
+                    ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center text-white p-8">
+                            <div className="w-16 h-16 mb-6 rounded-full bg-neutral-800 flex items-center justify-center">
+                                <Compass className="w-8 h-8 text-gray-400" />
+                            </div>
+                            <h2 className="text-xl font-bold text-white mb-2">히든 스팟을 찾는 중...</h2>
+                            <p className="text-gray-400 text-center text-sm mb-6">
+                                현재 Supabase에 연결된 딜이 없습니다.<br/>
+                                SQL 스크립트를 실행하여 데이터를 추가해주세요.
+                            </p>
+                            <div className="bg-neutral-800 rounded-lg p-4 max-w-sm w-full">
+                                <p className="text-xs text-gray-500 mb-2">📝 다음 단계:</p>
+                                <ol className="text-xs text-gray-400 space-y-1 list-decimal list-inside">
+                                    <li>Supabase 대시보드 접속</li>
+                                    <li>SQL Editor 열기</li>
+                                    <li>supabase-demo-data.sql 실행</li>
+                                </ol>
+                            </div>
+                        </div>
+                    )}
                 </div>
                 )}
 
