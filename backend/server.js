@@ -9,7 +9,7 @@ const crypto = require('crypto');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 8080;
 
 // Supabase 클라이언트 (서비스 롤 키 사용)
 const supabaseUrl = process.env.SUPABASE_URL;
