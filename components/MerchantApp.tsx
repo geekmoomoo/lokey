@@ -12,7 +12,7 @@ import {
 import { GoogleGenAI } from "@google/genai";
 import { DealScreen } from './DealScreen';
 import { addDeal, getMerchantDeals, updateDeal, generateContextComments, uploadImageToStorage, fetchMerchantDeals } from '@shared/services/dealService';
-import { supabase, isSupabaseConfigured, ensureSupabase } from '@shared/services/supabaseClient';
+import { loginPartner, registerPartner } from '@shared/services/apiService';
 
 // Generate UUID v4
 const generateUUID = (): string => {
@@ -43,15 +43,6 @@ const extractNumbersOnly = (value: string): string => {
 };
 
 // 비밀번호 해싱 함수 (SHA-256, 실제로는 bcrypt 권장)
-const hashPassword = async (password: string): Promise<string> => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  return hashHex;
-};
-
 interface MerchantAppProps {
   onBackToHome: () => void;
 }
@@ -329,13 +320,13 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
     const [qtyToAdd, setQtyToAdd] = useState<string>('');
     const [activeTab, setActiveTab] = useState<'ACTIVE' | 'ENDED'>('ACTIVE');
 
-    // Load deals from Supabase
+    // Load deals from the backend API
     useEffect(() => {
         if (authState === 'LOGGED_IN') {
-            // Supabase에서 실시간으로 딜 데이터 불러오기
-            const loadDealsFromSupabase = async () => {
+            // backend API에서 실시간으로 딜 데이터 불러오기
+            const loadDealsFrombackend API = async () => {
                 try {
-                    const fetchedDeals = await fetchMerchantDeals(); // Supabase에서 직접 가져오기
+                    const fetchedDeals = await fetchMerchantDeals(); // backend API에서 직접 가져오기
                     setMyDeals(fetchedDeals || []);
                 } catch (error) {
                     console.error('딜 데이터 로딩 실패:', error);
@@ -345,7 +336,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
                 }
             };
 
-            loadDealsFromSupabase();
+            loadDealsFrombackend API();
         }
     }, [authState]);
 
@@ -356,7 +347,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
     const handleStopDeal = (deal: Deal) => {
         if (confirm(`'${deal.title}' 광고를 중단하시겠습니까?\n중단된 광고는 복구할 수 없습니다.`)) {
             updateDeal(deal.id, { status: 'CANCELED', expiresAt: new Date() }).then(() => {
-                // Supabase에서 다시 데이터 불러오기
+                // backend API에서 다시 데이터 불러오기
                 fetchMerchantDeals().then(deals => setMyDeals(deals || []));
             });
         }
@@ -370,7 +361,7 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
                     totalCoupons: addQtyDeal.totalCoupons + added,
                     remainingCoupons: addQtyDeal.remainingCoupons + added
                 }).then(() => {
-                    // Supabase에서 다시 데이터 불러오기
+                    // backend API에서 다시 데이터 불러오기
                     fetchMerchantDeals().then(deals => setMyDeals(deals || []));
                 });
                 setAddQtyDeal(null);
@@ -549,101 +540,49 @@ const DashboardScreen: React.FC<DashboardScreenProps> = ({ authState, storeName,
     );
 };
 
-// Supabase에서 파트너 정보 가져오기 + 비밀번호 검증
+// backend API에서 파트너 정보 가져오기 + 비밀번호 검증
+
 const authenticatePartner = async (businessRegNumber: string, password: string): Promise<typeof INITIAL_SIGNUP_FORM | null> => {
   try {
-    if (!isSupabaseConfigured) {
-      console.warn('Supabase not configured - skipping partner fetch');
+    const result = await loginPartner(businessRegNumber, password);
+    if (!result.success || !result.partner) {
+      console.warn('Partner login failed:', result.error);
       return null;
     }
 
-    const supabaseClient = ensureSupabase();
-
-    const { data, error } = await supabaseClient
-      .from('partners')
-      .select('*')
-      .eq('business_reg_number', businessRegNumber)
-      .single();
-
-    if (error || !data) {
-      console.warn('Partner not found in database', error);
-      return null;
-    }
-
-    // 비밀번호 검증
-    const inputHash = await hashPassword(password);
-    if (inputHash !== data.password) {
-      console.warn('Password mismatch for partner:', businessRegNumber);
-      return null;
-    }
-
-    // 데이터 변환 (비밀번호 제외)
+    const partner = result.partner;
     const partnerData: typeof INITIAL_SIGNUP_FORM = {
-      businessRegNumber: data.business_reg_number,
-      password: '******', // 보안을 위해 마스킹
-      storeName: data.store_name,
-      storeType: data.store_type || '본점',
-      category: data.category,
-      categoryCustom: data.category_custom || '',
-      address: data.address,
-      storePhone: data.store_phone || '',
-      ownerName: data.owner_name,
-      ownerPhone: data.owner_phone,
-      planType: data.plan_type || 'REGULAR'
+      businessRegNumber: partner.businessRegNumber,
+      password: '******',
+      storeName: partner.storeName,
+      storeType: partner.storeType || '본점',
+      category: partner.category || 'KOREAN',
+      categoryCustom: '',
+      address: partner.address || '',
+      storePhone: partner.storePhone || '',
+      ownerName: partner.ownerName || '',
+      ownerPhone: partner.ownerPhone || '',
+      planType: partner.planType || 'REGULAR'
     };
 
     console.log('Partner authenticated successfully:', partnerData.storeName);
     return partnerData;
   } catch (error) {
-    console.error('파트너 인증 중 예외 발생:', error);
+    console.error('Partner authentication error:', error);
     return null;
   }
 };
 
-// 파트너(상점주인) 정보를 Supabase에 저장하는 함수
 const savePartnerToDatabase = async (signupData: typeof INITIAL_SIGNUP_FORM): Promise<boolean> => {
   try {
-    if (!isSupabaseConfigured) {
-      console.warn('Supabase not configured - skipping partner save');
+    const result = await registerPartner(signupData);
+    if (!result.success) {
+      console.error('Partner registration failed:', result.error);
       return false;
     }
-
-    const supabaseClient = ensureSupabase();
-
-    // 최종 카테고리 결정 (기타 선택 시 직접 입력 값 사용)
-    const finalCategory = signupData.category === 'OTHER' ? signupData.categoryCustom : signupData.category;
-
-    // 비밀번호 해싱
-    const hashedPassword = await hashPassword(signupData.password);
-
-    const partnerData = {
-      business_reg_number: signupData.businessRegNumber,
-      password: hashedPassword, // ✅ 해싱된 비밀번호 저장
-      store_name: signupData.storeName,
-      store_type: signupData.storeType,
-      category: finalCategory,
-      address: signupData.address,
-      store_phone: signupData.storePhone,
-      owner_name: signupData.ownerName,
-      owner_phone: signupData.ownerPhone,
-      plan_type: signupData.planType,
-      status: 'ACTIVE'
-    };
-
-    const { data, error } = await supabaseClient
-      .from('partners')
-      .insert(partnerData)
-      .select();
-
-    if (error) {
-      console.error('파트너 저장 오류:', error);
-      return false;
-    }
-
-    console.log('파트너 저장 성공:', data);
     return true;
   } catch (error) {
-    console.error('파트너 저장 중 예외 발생:', error);
+    console.error('Partner registration error:', error);
     return false;
   }
 };
@@ -899,7 +838,7 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
              newImages.push("https://images.unsplash.com/photo-1546069901-ba9599a7e63c?q=80&w=1000&auto=format&fit=crop");
         }
 
-        // Compress and upload images to Supabase Storage
+        // Compress and upload images to backend API Storage
         const uploadedImages: string[] = [];
         for (let i = 0; i < newImages.length; i++) {
             const base64Image = newImages[i];
@@ -1404,7 +1343,7 @@ export const MerchantApp: React.FC<MerchantAppProps> = ({ onBackToHome }) => {
                 return alert('필수 정보를 모두 입력해주세요.');
             }
 
-            // TODO: Supabase에 업데이트 로직 추가
+            // TODO: backend API에 업데이트 로직 추가
             console.log('프로필 수정:', editProfileForm);
 
             // 임시로 폼 데이터만 업데이트

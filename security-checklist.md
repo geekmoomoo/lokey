@@ -1,80 +1,39 @@
-# 🔐 LO.KEY 보안 검토 체크리스트
+# LO.KEY Security Checklist
 
-## ✅ **완료된 보안 조치**
+## Backend safety
 
-### 1. **비밀번호 해싱** ✅
-- SHA-256 해싱 구현 완료
-- 회원가입 시 자동 해싱 저장
-- 로그인 시 비밀번호 검증 완료
+1. **Secrets**
+   - Store `GEMINI_API_KEY` in Firebase environment config or `.env` for local runs.
+   - Do **not** expose Firestore service account keys inside the client; rely on Cloud Functions.
 
-### 2. **인증 강화** ✅
-- 실제 비밀번호 검증 로직 추가
-- 사업자등록번호 + 비밀번호 이중 검증
-- 실패 시 적절한 에러 메시지
+2. **Firestore rules**
+   - Permit only Cloud Functions/authorized clients to write partners/deals.
+   - Restrict public reads to approved collections (`deals` can be public with filtered status).
 
-### 3. **데이터 마스킹** ✅
-- 클라이언트에서 비밀번호 마스킹
-- 로그에 민감 정보 제거
+3. **Image uploads**
+   - Use signed URLs or `makePublic()` only for `deal-images/*`.
+   - Scan/validate base64 uploads to avoid malicious payloads before writing to Storage.
 
-## ⚠️ **즉시 필요한 보안 조치**
+## Operational hygiene
 
-### 1. **API 키 백엔드 이전** 🚨
-- **문제**: GEMINI_API_KEY, SUPABASE_KEY가 클라이언트에 노출
-- **위험**: API 무단 사용, 비용 폭주
-- **조치**: Node.js 백엔드 서버 구축 필요
+1. **Local development**
+   - Use `firebase emulators:start --only functions,firestore,storage`.
+   - Point `VITE_API_BASE_URL` to `http://localhost:5001/<project-id>/us-central1`.
 
-### 2. **기존 데이터 마이그레이션** 🚨
-- **문제**: 기존 파트너 비밀번호가 평문으로 저장됨
-- **위험**: DB 유출 시 모든 비밀번호 탈취
-- **조치**: `migrate-passwords.js` 스크립트 실행 필요
+2. **Deployment**
+   - Run `firebase deploy --only functions` from the backend folder.
+   - Confirm `GOOGLE_APPLICATION_CREDENTIALS` (or logged-in CLI user) can access the project.
 
-## 🔄 **추천 다음 단계**
+3. **Monitoring**
+   - Inspect Cloud Functions logs for errors and rate spikes.
+   - Enable Firestore usage alerts (e.g., billing thresholds).
 
-### **긴급 (1-2일)**
-1. **백엔드 서버 구축**
-   ```bash
-   npm init backend
-   npm install express cors dotenv
-   npm install @supabase/supabase-js
-   ```
+## Frontend considerations
 
-2. **API 엔드포인트 생성**
-   - `/api/auth/login`
-   - `/api/partner/register`
-   - `/api/deal/create`
+1. **Environment variables**
+   - Set `VITE_API_BASE_URL` and `VITE_FIREBASE_PROJECT_ID` in `.env.local`.
+   - Refresh the dev server after any `.env` change.
 
-3. **마이그레이션 실행**
-   ```bash
-   node migrate-passwords.js
-   ```
-
-### **중간 (1주)**
-1. **JWT 토큰 구현**
-2. **입력 검증 강화**
-3. **에러 핸들링 개선**
-
-## 🔍 **보안 검토 결과**
-
-### **현재 보안 수준**: ⚠️ **개발용**
-- ✅ 비밀번호 해싱: 완료
-- ⚠️ API 키 관리: 위험
-- ⚠️ 인증: 부분적 개선
-- ❌ 백엔드 보안: 필요
-
-### **프로덕션 준비**: 🔄 **진행 중**
-- **예상 완료 시점**: 백엔드 구축 후
-- **긴급 수정 필요**: API 키 이전
-
----
-
-## 📞 **즉시 조치 항목**
-
-1. **API 키 서버 이전** - 가장 시급
-2. **백엔드 구축** - 다음 주
-3. **마이그레이션 실행** - 백엔드 구축 후
-
-## 🎯 **보안 점수**
-- API 키는 절대 클라이언트에 노출 금지
-- 모든 사용자 입력은 서버에서 검증
-- 민감 데이터는 항상 해싱/암호화
-- 로그에 개인정보 기록 금지
+2. **API usage**
+   - Always check `success` flag before trusting data from `/generateImage`, `/listDeals`, etc.
+   - Handle HTTP errors/timeout gracefully and surface helpful messages to the user.

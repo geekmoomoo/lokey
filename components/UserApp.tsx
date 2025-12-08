@@ -178,15 +178,15 @@ export const UserApp: React.FC<UserAppProps> = ({ onBackToHome }) => {
                             </div>
                             <h2 className="text-xl font-bold text-white mb-2">히든 스팟을 찾는 중...</h2>
                             <p className="text-gray-400 text-center text-sm mb-6">
-                                현재 Supabase에 연결된 딜이 없습니다.<br/>
-                                SQL 스크립트를 실행하여 데이터를 추가해주세요.
+                                백엔드 API에 딜이 아직 등록되지 않았습니다.<br/>
+                                Firebase Cloud Functions를 배포하고 샘플 딜을 만들어 보세요.
                             </p>
                             <div className="bg-neutral-800 rounded-lg p-4 max-w-sm w-full">
-                                <p className="text-xs text-gray-500 mb-2">📝 다음 단계:</p>
+                                <p className="text-xs text-gray-500 mb-2">체크리스트:</p>
                                 <ol className="text-xs text-gray-400 space-y-1 list-decimal list-inside">
-                                    <li>Supabase 대시보드 접속</li>
-                                    <li>SQL Editor 열기</li>
-                                    <li>supabase-demo-data.sql 실행</li>
+                                    <li>Firebase 콘솔에서 deals 컬렉션 확인</li>
+                                    <li>백엔드 API로 딜 생성 호출</li>
+                                    <li>샘플 데이터로 피드 테스트</li>
                                 </ol>
                             </div>
                         </div>

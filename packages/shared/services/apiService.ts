@@ -1,7 +1,9 @@
 // API ì„œë¹„ìŠ¤ - ë°±ì—”ë“œ API í˜¸ì¶œ ì „ìš©
-const API_BASE_URL = process.env.NODE_ENV === 'development'
-    ? 'http://localhost:3001/api'
-    : 'https://your-domain.com/api';
+const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'lokey-backend';
+const overrideBase = import.meta.env.VITE_API_BASE_URL;
+const API_BASE_URL = (overrideBase || `http://localhost:5001/${projectId}/us-central1`).replace(/\/$/, '');
+
+const buildFunctionUrl = (functionName: string) => `${API_BASE_URL}/${functionName}`;
 
 // íƒ€ì… ì •ì˜
 export interface ApiResponse<T = any> {
@@ -17,7 +19,7 @@ export const generateImage = async (prompt: string, style: string = 'NATURAL'): 
     try {
         console.log('ğŸ¨ ì´ë¯¸ì§€ ìƒì„± ìš”ì²­ (ë°±ì—”ë“œ):', { prompt: prompt.substring(0, 50) + '...', style });
 
-        const response = await fetch(`${API_BASE_URL}/generate-image`, {
+        const response = await fetch(buildFunctionUrl('generateImage'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -46,7 +48,7 @@ export const generateImage = async (prompt: string, style: string = 'NATURAL'): 
 // íŒŒíŠ¸ë„ˆ íšŒì›ê°€ì…
 export const registerPartner = async (partnerData: any): Promise<ApiResponse<any>> => {
     try {
-        const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        const response = await fetch(buildFunctionUrl('registerPartner'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -69,7 +71,7 @@ export const registerPartner = async (partnerData: any): Promise<ApiResponse<any
 // íŒŒíŠ¸ë„ˆ ë¡œê·¸ì¸
 export const loginPartner = async (businessRegNumber: string, password: string): Promise<ApiResponse<{ partner: any }>> => {
     try {
-        const response = await fetch(`${API_BASE_URL}/auth/login`, {
+        const response = await fetch(buildFunctionUrl('loginPartner'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -92,9 +94,12 @@ export const loginPartner = async (businessRegNumber: string, password: string):
 // ë”œ ëª©ë¡ ì¡°íšŒ
 export const fetchDeals = async (status?: string): Promise<ApiResponse<{ deals: any[] }>> => {
     try {
-        const url = status ? `${API_BASE_URL}/deals?status=${status}` : `${API_BASE_URL}/deals`;
+        const url = new URL(buildFunctionUrl('listDeals'));
+        if (status) {
+            url.searchParams.set('status', status);
+        }
 
-        const response = await fetch(url);
+        const response = await fetch(url.toString());
         const result: ApiResponse<{ deals: any[] }> = await response.json();
         return result;
     } catch (error) {
@@ -110,7 +115,7 @@ export const fetchDeals = async (status?: string): Promise<ApiResponse<{ deals: 
 // ë”œ ìƒì„±
 export const createDeal = async (dealData: any): Promise<ApiResponse<{ dealId: string }>> => {
     try {
-        const response = await fetch(`${API_BASE_URL}/deals`, {
+        const response = await fetch(buildFunctionUrl('createDeal'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -125,6 +130,49 @@ export const createDeal = async (dealData: any): Promise<ApiResponse<{ dealId: s
         return {
             success: false,
             error: 'ë”œ ìƒì„± ì¤‘ ì˜¤ë¥˜ê°€ ë°œìƒí–ˆìŠµë‹ˆë‹¤.',
+            details: error.message
+        };
+    }
+};
+export const updateDeal = async (dealId: string, updates: Record<string, any>): Promise<ApiResponse<any>> => {
+    try {
+        const response = await fetch(buildFunctionUrl('updateDeal'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ dealId, updates }),
+        });
+
+        const result: ApiResponse<any> = await response.json();
+        return result;
+    } catch (error) {
+        console.error('µô ¾÷µ¥ÀÌÆ® ½ÇÆĞ (Å¬¶óÀÌ¾ğÆ®):', error);
+        return {
+            success: false,
+            error: 'µô Á¤º¸¸¦ ¾÷µ¥ÀÌÆ®ÇÒ ¼ö ¾ø½À´Ï´Ù.',
+            details: error.message
+        };
+    }
+};
+
+export const uploadDealImage = async (base64Data: string, fileName?: string): Promise<ApiResponse<{ url: string }>> => {
+    try {
+        const response = await fetch(buildFunctionUrl('uploadImage'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ base64Data, fileName }),
+        });
+
+        const result: ApiResponse<{ url: string }> = await response.json();
+        return result;
+    } catch (error) {
+        console.error('ÀÌ¹ÌÁö ¾÷·Îµå ½ÇÆĞ (Å¬¶óÀÌ¾ğÆ®):', error);
+        return {
+            success: false,
+            error: 'ÀÌ¹ÌÁö¸¦ ¾÷·ÎµåÇÒ ¼ö ¾ø½À´Ï´Ù.',
             details: error.message
         };
     }
