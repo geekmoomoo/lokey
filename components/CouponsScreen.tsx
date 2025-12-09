@@ -31,7 +31,27 @@ const CouponTimer: React.FC<{ expiresAt: Date }> = ({ expiresAt }) => {
   useEffect(() => {
     const calculateTimeLeft = () => {
       const now = new Date();
-      const diff = new Date(expiresAt).getTime() - now.getTime();
+      let expiryDate;
+
+      // Handle different date formats robustly
+      if (expiresAt instanceof Date) {
+        expiryDate = expiresAt;
+      } else if (expiresAt?.toDate) {
+        expiryDate = expiresAt.toDate();
+      } else if (expiresAt) {
+        expiryDate = new Date(expiresAt);
+      } else {
+        // Default to 7 days from now if no expiry date
+        expiryDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      }
+
+      // Validate the date
+      if (isNaN(expiryDate.getTime())) {
+        setTimeLeft('기간 정보 없음');
+        return;
+      }
+
+      const diff = expiryDate.getTime() - now.getTime();
 
       if (diff <= 0) {
         setTimeLeft('기간 만료');
@@ -51,7 +71,7 @@ const CouponTimer: React.FC<{ expiresAt: Date }> = ({ expiresAt }) => {
     };
 
     calculateTimeLeft();
-    const timer = setInterval(calculateTimeLeft, 60000); 
+    const timer = setInterval(calculateTimeLeft, 60000);
     return () => clearInterval(timer);
   }, [expiresAt]);
 

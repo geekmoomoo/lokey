@@ -1,17 +1,34 @@
 import React, { useState } from 'react';
 import { UserApp } from './components/UserApp';
 import { MerchantApp } from './components/MerchantApp';
+import { AuthProvider } from './contexts/AuthContext';
+import { PartnerAuthContextProvider } from './contexts/PartnerAuthContext';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { Key, Store, User } from 'lucide-react';
 
 const App: React.FC = () => {
   const [appMode, setAppMode] = useState<'SELECTION' | 'USER' | 'MERCHANT'>('SELECTION');
 
   if (appMode === 'USER') {
-    return <UserApp onBackToHome={() => setAppMode('SELECTION')} />;
+    return (
+      <ErrorBoundary>
+        <AuthProvider>
+          <UserApp onBackToHome={() => setAppMode('SELECTION')} />
+        </AuthProvider>
+      </ErrorBoundary>
+    );
   }
 
   if (appMode === 'MERCHANT') {
-    return <MerchantApp onBackToHome={() => setAppMode('SELECTION')} />;
+    return (
+      <ErrorBoundary>
+        <AuthProvider>
+          <PartnerAuthContextProvider>
+            <MerchantApp onBackToHome={() => setAppMode('SELECTION')} />
+          </PartnerAuthContextProvider>
+        </AuthProvider>
+      </ErrorBoundary>
+    );
   }
 
   // --- LANDING SELECTION SCREEN ---

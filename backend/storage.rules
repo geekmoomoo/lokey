@@ -1,0 +1,14 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // deal-images 폴더는 읽기/쓰기 허용 (임시로 테스트용)
+    match /deal-images/{allPaths=**} {
+      allow read, write: if true;
+    }
+    // 다른 파일들은 인증 필요
+    match /{allPaths=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

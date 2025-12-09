@@ -26,7 +26,7 @@ export interface Deal {
   restaurant: Restaurant;
   isGhost?: boolean; // New property for Ghost Tickets
   usageCondition?: string; // e.g., "1인 1메뉴 필수", "2만원 이상 주문 시"
-  status?: 'ACTIVE' | 'ENDED' | 'CANCELED';
+  status?: 'ACTIVE' | 'ENDED' | 'CANCELED' | 'DELETED';
   benefitType?: 'DISCOUNT' | 'CUSTOM' | 'AD'; // Persist the type of benefit
   customBenefit?: string; // Persist the custom text (e.g. "1+1")
   initialComments: string[]; // AI generated comments specific to this deal

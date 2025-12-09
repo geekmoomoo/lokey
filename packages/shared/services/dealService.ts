@@ -65,14 +65,46 @@ const normalizeDeal = (row: any): Deal => ({
 
 export const uploadImageToStorage = async (base64Data: string, fileName?: string): Promise<string | null> => {
   try {
-    const result = await apiUploadDealImage(base64Data, fileName);
-    if (!result.success) {
-      console.warn('이미지 업로드 실패:', result.error);
+    // 클라이언트 측 파일 크기 체크 (base64)
+    const sizeInBytes = (base64Data.split(',')[1] || base64Data).length * 0.75;
+    const sizeInMB = sizeInBytes / (1024 * 1024);
+
+    if (sizeInMB > 5) {
+      console.error(`Image too large: ${sizeInMB.toFixed(2)}MB (max 5MB)`);
+      alert('이미지 크기가 5MB를 초과했습니다. 더 작은 이미지를 사용해주세요.');
       return null;
     }
-    return result.url ?? null;
+
+    console.log(`Uploading image: ${sizeInMB.toFixed(2)}MB`);
+    const result = await apiUploadDealImage(base64Data, fileName);
+
+    if (!result.success) {
+      console.error('이미지 업로드 실패:', {
+        error: result.error,
+        details: result.details,
+        fileName: fileName
+      });
+
+      // 사용자 친화적인 에러 메시지
+      const errorMessage = result.error === '이미지 크기가 5MB를 초과했습니다.'
+        ? '이미지가 너무 큽니다. 더 작은 이미지를 사용해주세요.'
+        : result.error === '스토리지 용량이 초과되었습니다.'
+        ? '서버 저장 공간이 부족합니다. 잠시 후 다시 시도해주세요.'
+        : '이미지 업로드에 실패했습니다. 다시 시도해주세요.';
+
+      alert(errorMessage);
+      return null;
+    }
+
+    console.log('Image upload successful:', result.data?.url);
+    return result.data?.url ?? null;
   } catch (error) {
-    console.error('uploadImageToStorage error:', error);
+    console.error('uploadImageToStorage error:', {
+      message: error.message,
+      stack: error.stack,
+      fileName: fileName
+    });
+    alert('이미지 업로드 중 오류가 발생했습니다. 다시 시도해주세요.');
     return null;
   }
 };
@@ -91,8 +123,8 @@ export const generateContextComments = (category: string, title: string): string
 
 export const fetchFlashDeals = async (): Promise<Deal[]> => {
   const result = await apiFetchDeals('ACTIVE');
-  if (result.success && result.deals?.length) {
-    currentDeals = result.deals.map(normalizeDeal);
+  if (result.success && result.data?.deals?.length) {
+    currentDeals = result.data.deals.map(normalizeDeal);
     return currentDeals;
   }
 
@@ -103,10 +135,24 @@ export const fetchFlashDeals = async (): Promise<Deal[]> => {
   return currentDeals.filter((deal) => deal.status === 'ACTIVE' || !deal.status);
 };
 
-export const fetchMerchantDeals = async (): Promise<Deal[]> => {
-  const result = await apiFetchDeals();
+export const fetchMerchantDeals = async (merchantId?: string, businessRegNumber?: string): Promise<Deal[]> => {
+  // Always use production Firebase Cloud Functions
+  const url = new URL('https://us-central1-lokey-service.cloudfunctions.net/listDeals');
+
+  if (merchantId) {
+    url.searchParams.set('merchantId', merchantId);
+  }
+  if (businessRegNumber) {
+    url.searchParams.set('businessRegNumber', businessRegNumber);
+  }
+
+  console.log('🔍 Fetching merchant deals from production:', url.toString());
+  const response = await fetch(url.toString());
+  const result = await response.json();
+
   if (result.success && result.deals?.length) {
     currentDeals = result.deals.map(normalizeDeal);
+    console.log('✅ Merchant deals loaded from production:', currentDeals.length, 'deals');
     return currentDeals;
   }
 
@@ -114,7 +160,8 @@ export const fetchMerchantDeals = async (): Promise<Deal[]> => {
     console.warn('Merchant deals API failed:', result.error);
   }
 
-  return [...currentDeals];
+  console.log('📭 No merchant deals found in production, returning empty array');
+  return [];
 };
 
 export const getMerchantDeals = (): Deal[] => {

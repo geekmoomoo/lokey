@@ -6,6 +6,9 @@ import { Deal } from '@shared/types';
 interface DealScreenProps {
   deal: Deal;
   onUseCoupon?: () => void;
+  onClaimCoupon?: (deal: Deal) => void;
+  onNavigateToCoupons?: () => void; // Function to navigate to coupons tab
+  myCoupons?: any[]; // Array of user's claimed coupons
 }
 
 // --- DANMAKU (Bullet Chat) TYPE & DATA ---
@@ -19,7 +22,7 @@ interface DanmakuItem {
   isUser: boolean; // true if written by current user
 }
 
-export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => {
+export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon, onClaimCoupon, onNavigateToCoupons, myCoupons = [] }) => {
   const [remaining, setRemaining] = useState(deal.remainingCoupons);
   const [isTorn, setIsTorn] = useState(false);
   const [timeLeft, setTimeLeft] = useState("");
@@ -46,6 +49,11 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
   const danmakuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isAdMode = deal.discountAmount === 0;
+
+  // Check if user already has this coupon
+  const isAlreadyClaimed = myCoupons.some(coupon =>
+    coupon.dealId === deal.id && coupon.status === 'AVAILABLE'
+  );
 
   const safeVibrate = (pattern: number | number[]) => {
     try {
@@ -241,10 +249,17 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
     if (!isDragging || isTorn) return;
     setIsDragging(false);
 
-    if (dragX > 120) { // Threshold
+    if (dragX > 120 && !isAlreadyClaimed) { // Threshold and not already claimed
       setIsTorn(true);
       safeVibrate([30, 50, 80]); // Success vibration
       triggerConfetti();
+
+      // Call claim coupon handler
+      if (onClaimCoupon) {
+        onClaimCoupon(deal);
+        // Decrement remaining count locally for immediate UI update
+        setRemaining(prev => Math.max(0, prev - 1));
+      }
     } else {
       setDragX(0); // Snap back
     }
@@ -477,7 +492,19 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
             `}>
                  <div className={`text-center w-full px-1 flex flex-col items-center justify-center h-full ${isTorn ? 'opacity-50' : ''}`}>
                     {isTorn ? (
-                         <span className="text-xs font-bold text-gray-500">발급<br/>완료</span>
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // Navigate to My Tickets using the provided function
+                                if (onNavigateToCoupons) {
+                                    onNavigateToCoupons();
+                                }
+                            }}
+                            className="px-2 py-1 bg-purple-600 text-white text-[7px] font-bold rounded-sm hover:bg-purple-700 transition-colors active:scale-95 flex items-center gap-1"
+                        >
+                            <ShoppingBag size={6} />
+                            쿠폰함 보기
+                        </button>
                     ) : (
                         <>
                             <span className="text-[9px] text-gray-500 font-bold uppercase tracking-wider mb-0.5">
@@ -539,6 +566,14 @@ export const DealScreen: React.FC<DealScreenProps> = ({ deal, onUseCoupon }) => 
 
                 {remaining === 0 ? (
                     <span className="w-full text-center font-bold text-gray-300 text-sm">금일 마감되었습니다</span>
+                ) : isAlreadyClaimed ? (
+                    <div className="w-full h-full relative flex items-center">
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-base font-bold text-green-600 tracking-tight">
+                                티켓 발급 완료
+                            </span>
+                        </div>
+                    </div>
                 ) : (
                     <div className="w-full h-full relative flex items-center">
                         <div className="absolute inset-0 flex items-center justify-between px-4">
