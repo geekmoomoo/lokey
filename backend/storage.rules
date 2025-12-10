@@ -2,13 +2,26 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // deal-images 폴더는 읽기/쓰기 허용 (임시로 테스트용)
-    match /deal-images/{allPaths=**} {
-      allow read, write: if true;
+    // deal-images 폴더: 읽기는 모든 사용자 허용, 쓰기는 Cloud Functions만 허용
+    match /deal-images/{fileName} {
+      // 읽기: 모든 사용자 허용 (공개 이미지)
+      allow read: if true;
+
+      // 쓰기: Cloud Functions (서비스 계정)에서만 가능
+      // 클라이언트 직접 업로드 차단 - 반드시 백엔드 API를 통해 업로드
+      allow write: if false;
     }
-    // 다른 파일들은 인증 필요
+
+    // 사용자 프로필 이미지 등 다른 파일들
+    match /user-uploads/{userId}/{allPaths=**} {
+      // 본인 파일만 읽기/쓰기 가능
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // 기본 규칙: 인증 필요
     match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if false; // 명시적으로 허용된 경로만 쓰기 가능
     }
   }
 }

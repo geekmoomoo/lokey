@@ -99,9 +99,10 @@ export const uploadImageToStorage = async (base64Data: string, fileName?: string
     console.log('Image upload successful:', result.data?.url);
     return result.data?.url ?? null;
   } catch (error) {
+    const err = error as Error;
     console.error('uploadImageToStorage error:', {
-      message: error.message,
-      stack: error.stack,
+      message: err.message,
+      stack: err.stack,
       fileName: fileName
     });
     alert('이미지 업로드 중 오류가 발생했습니다. 다시 시도해주세요.');

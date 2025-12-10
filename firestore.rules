@@ -1,9 +1,38 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 인증된 사용자만 데이터 읽기/쓰기 허용
+
+    // ===== 파트너 (상점) 컬렉션 =====
+    match /partners/{partnerId} {
+      // 읽기: 인증된 사용자 (자신의 정보만)
+      // 참고: 파트너 로그인은 Cloud Functions에서 처리하므로 클라이언트 읽기는 제한
+      allow read: if request.auth != null;
+
+      // 쓰기: Cloud Functions에서만 처리 (회원가입, 정보 수정)
+      allow write: if false;
+    }
+
+    // ===== 딜 (쿠폰 상품) 컬렉션 =====
+    match /deals/{dealId} {
+      // 읽기: 모든 사용자 허용 (공개 딜 목록)
+      allow read: if true;
+
+      // 쓰기: Cloud Functions에서만 처리
+      allow write: if false;
+    }
+
+    // ===== 사용자 컬렉션 =====
+    match /users/{userId} {
+      // 읽기: 본인 데이터만 읽기 가능
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // 쓰기: Cloud Functions에서만 처리 (쿠폰 발급/사용)
+      allow write: if false;
+    }
+
+    // ===== 기본 규칙: 모든 접근 차단 =====
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
     }
   }
 }

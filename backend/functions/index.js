@@ -2,10 +2,12 @@ const functions = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 const cors = require('cors');
 const { GoogleGenAI } = require('@google/genai');
-const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const mime = require('mime-types');
 const { v4: uuidv4 } = require('uuid');
-// Firebase Admin SDK imports
+
+// 비밀번호 해싱 설정
+const BCRYPT_SALT_ROUNDS = 12;
 
 // Always use production Firebase
 admin.initializeApp({
@@ -43,8 +45,25 @@ const PARTNERS_COLLECTION = 'partners';
 const DEALS_COLLECTION = 'deals';
 const USERS_COLLECTION = 'users';
 
+// 허용된 도메인 목록
+const ALLOWED_ORIGINS = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://127.0.0.1:5173',
+  'https://lokey-service.web.app',
+  'https://lokey-service.firebaseapp.com'
+];
+
 const corsMiddleware = cors({
-  origin: true,
+  origin: (origin, callback) => {
+    // 서버 간 요청(origin이 없음) 또는 허용된 도메인인 경우 허용
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn('CORS 차단된 요청:', origin);
+      callback(new Error('CORS 정책에 의해 차단됨'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'OPTIONS'],
   optionsSuccessStatus: 204
@@ -61,10 +80,15 @@ const wrapHandler = (handler) =>
       maxInstances: 10
     },
     async (req, res) => {
+      // 동적으로 origin 설정 (CORS 미들웨어에서 처리하지만 명시적으로도 설정)
+      const origin = req.headers.origin;
+      if (origin && ALLOWED_ORIGINS.includes(origin)) {
+        res.set('Access-Control-Allow-Origin', origin);
+      }
       res.set({
-        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS'
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Credentials': 'true'
       });
 
       corsMiddleware(req, res, async () => {
@@ -86,7 +110,22 @@ const wrapHandler = (handler) =>
     }
   );
 
-const hashPassword = (password) => crypto.createHash('sha256').update(password).digest('hex');
+// bcrypt를 사용한 안전한 비밀번호 해싱
+const hashPassword = async (password) => {
+  return await bcrypt.hash(password, BCRYPT_SALT_ROUNDS);
+};
+
+// 비밀번호 검증
+const verifyPassword = async (password, hashedPassword) => {
+  // 기존 SHA256 해시와의 호환성 (마이그레이션 기간)
+  if (hashedPassword.length === 64 && /^[a-f0-9]+$/.test(hashedPassword)) {
+    const crypto = require('crypto');
+    const sha256Hash = crypto.createHash('sha256').update(password).digest('hex');
+    return sha256Hash === hashedPassword;
+  }
+  // bcrypt 해시 검증
+  return await bcrypt.compare(password, hashedPassword);
+};
 
 const partnerDto = (doc) => {
   const data = doc.data();
@@ -215,7 +254,7 @@ const registerPartnerHandler = async (req, res) => {
     return;
   }
 
-  const hashedPassword = hashPassword(password);
+  const hashedPassword = await hashPassword(password);
   const finalCategory = category === 'OTHER' ? categoryCustom : category;
 
   const partnerPayload = {
@@ -271,14 +310,25 @@ const loginPartnerHandler = async (req, res) => {
 
   const partnerDoc = snapshot.docs[0];
   const partnerData = partnerDoc.data();
-  const inputHash = hashPassword(password);
 
-  if (inputHash !== partnerData.password) {
+  // bcrypt 또는 기존 SHA256 해시 검증
+  const isPasswordValid = await verifyPassword(password, partnerData.password);
+
+  if (!isPasswordValid) {
     res.status(401).json({
       success: false,
       error: '비밀번호가 일치하지 않습니다.'
     });
     return;
+  }
+
+  // 기존 SHA256 해시인 경우 bcrypt로 마이그레이션
+  if (partnerData.password.length === 64 && /^[a-f0-9]+$/.test(partnerData.password)) {
+    const newHash = await hashPassword(password);
+    await db.collection(PARTNERS_COLLECTION).doc(partnerDoc.id).update({
+      password: newHash
+    });
+    console.log('비밀번호 해시 마이그레이션 완료:', partnerData.store_name);
   }
 
   const partner = partnerDto(partnerDoc);
@@ -630,9 +680,11 @@ const uploadImageHandler = async (req, res) => {
 
     res.json({
       success: true,
-      url: publicUrl,
-      fileName: safeFileName,
-      size: sizeInMB.toFixed(2)
+      data: {
+        url: publicUrl,
+        fileName: safeFileName,
+        size: sizeInMB.toFixed(2)
+      }
     });
   } catch (error) {
     console.error('Image upload failed:', {

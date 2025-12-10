@@ -71,7 +71,7 @@ export const registerPartner = async (partnerData: any): Promise<ApiResponse<any
         return {
             success: false,
             error: '서버 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -103,7 +103,7 @@ export const loginPartner = async (businessRegNumber: string, password: string):
         return {
             success: false,
             error: '로그인 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -126,7 +126,7 @@ export const updatePartner = async (partnerId: string, updates: Record<string, a
         return {
             success: false,
             error: '파트너 정보 수정 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -147,7 +147,7 @@ export const fetchDeals = async (status?: string): Promise<ApiResponse<{ deals: 
         return {
             success: false,
             error: '딜 목록 조회 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -170,7 +170,7 @@ export const createDeal = async (dealData: any): Promise<ApiResponse<{ dealId: s
         return {
             success: false,
             error: '딜 생성 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -187,11 +187,11 @@ export const updateDeal = async (dealId: string, updates: Record<string, any>): 
         const result: ApiResponse<any> = await response.json();
         return result;
     } catch (error) {
-        console.error('�� ������Ʈ ���� (Ŭ���̾�Ʈ):', error);
+        console.error('❌ 딜 업데이트 오류 (클라이언트):', error);
         return {
             success: false,
-            error: '�� ������ ������Ʈ�� �� �����ϴ�.',
-            details: error.message
+            error: '딜 정보를 업데이트할 수 없습니다.',
+            details: (error as Error).message
         };
     }
 };
@@ -209,11 +209,11 @@ export const uploadDealImage = async (base64Data: string, fileName?: string): Pr
         const result: ApiResponse<{ url: string }> = await response.json();
         return result;
     } catch (error) {
-        console.error('이미지 업로드 오류 (클라이언트):', error);
+        console.error('❌ 이미지 업로드 오류 (클라이언트):', error);
         return {
             success: false,
             error: '이미지를 업로드할 수 없습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -232,7 +232,7 @@ export const getUserCoupons = async (userId: string): Promise<ApiResponse<{ coup
         return {
             success: false,
             error: '쿠폰 조회 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -255,7 +255,7 @@ export const claimCoupon = async (userId: string, dealId: string, dealData: any)
         return {
             success: false,
             error: '쿠폰 발급 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
@@ -278,7 +278,7 @@ export const useCoupon = async (userId: string, couponId: string): Promise<ApiRe
         return {
             success: false,
             error: '쿠폰 사용 중 오류가 발생했습니다.',
-            details: error.message
+            details: (error as Error).message
         };
     }
 };
